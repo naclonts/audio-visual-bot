@@ -115,7 +115,7 @@ def handle_transcription(text):
 
     response = call_llm_api(text)
     print(f"\nLLM Response: {response}")
-    text_to_speech(response)  # Convert LLM response to speech
+    text_to_speech('. '.join([r.text for r in response]))
 
 def listen_to_audio():
     global running
