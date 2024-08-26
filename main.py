@@ -9,6 +9,9 @@ import wave
 from piper.voice import PiperVoice
 import queue
 import pyaudio
+import requests
+from pydub import AudioSegment
+from pydub.playback import play
 
 load_dotenv()
 
@@ -38,7 +41,8 @@ def call_llm_api(prompt):
     system_prompt = "You are integrated into a robot that communicates through a Raspberry Pi device. " + \
         "Text from the robot's microphone is passed to you via the Anthropic API. " + \
         "You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
-        "Keep things short and conversational. " + \
+        "Speak in the style of Thomas Carlyle, but " + \
+        "Keep things short and conversational. You should be brief to allow an interactive exchange. " + \
         "Note that because voice transcription is being done with a simple Whisper model before the text is passed to you, there may be some errors in the text transcription. Use your best guess as to the intention of the speaker."
 
     new_prompt_series = prompt_history + [
@@ -66,14 +70,55 @@ def call_llm_api(prompt):
 
 def text_to_speech(text):
     """Convert text to speech and play it back."""
+    USE_LOCAL_TTS = False
+
     sentences = text.split('. ')
 
-    for i, sentence in enumerate(sentences):
-        if sentence.strip():
-            wav_file_path = f'output_{i}.wav'
-            with wave.open(wav_file_path, 'w') as wav_file:
-                voice.synthesize(sentence.strip(), wav_file, sentence_silence=0.75)
-            audio_queue.put(wav_file_path)
+    if USE_LOCAL_TTS:
+        # Use the Piper TTS model
+        for i, sentence in enumerate(sentences):
+            if sentence.strip():
+                wav_file_path = f'output_{i}.wav'
+                with wave.open(wav_file_path, 'w') as wav_file:
+                    voice.synthesize(sentence.strip(), wav_file, sentence_silence=0.75)
+                audio_queue.put(wav_file_path)
+
+    else:
+        # Use the Eleven Labs API
+        voice_id = 'ZQe5CZNOzWyzPSCn5a3c' # "George"
+        headers = {
+            "Accept": "audio/mpeg",
+            "xi-api-key": os.getenv("ELEVEN_LABS_API_KEY"),
+            "Content-Type": "application/json"
+        }
+
+        for i, sentence in enumerate(sentences):
+            if sentence.strip():
+                file_path = f'output_{i}.mp3'
+
+                payload = {
+                    "text": sentence.strip(),
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.7
+                    }
+                }
+
+                response = requests.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                    headers=headers,
+                    json=payload
+                )
+
+                if response.status_code == 200:
+                    # Save the response content (audio data) to an MP3 file
+                    with open(file_path, 'wb') as mp3_file:
+                        mp3_file.write(response.content)
+
+                    # Put the MP3 file path in the queue if needed
+                    audio_queue.put(file_path)
+                else:
+                    print(f"Error: {response.status_code} - {response.text}")
 
 def audio_player(is_playing_audio, running):
     """Play audio files from the queue sequentially."""
@@ -85,34 +130,45 @@ def audio_player(is_playing_audio, running):
                 # Set the event to indicate audio is playing
                 is_playing_audio.value = True
 
-                wav_file_path = audio_queue.get()
-                wf = wave.open(wav_file_path, 'rb')
+                audio_file_path = audio_queue.get()
 
-                # Open a stream
-                stream = p.open(
-                    format=p.get_format_from_width(wf.getsampwidth()),
-                    channels=wf.getnchannels(),
-                    rate=wf.getframerate(),
-                    output=True
-                )
+                # Check the file extension
+                file_extension = os.path.splitext(audio_file_path)[1].lower()
 
-                # Read data in chunks
-                data = wf.readframes(1024)
+                if file_extension == '.wav':
+                    # Handling WAV file playback
+                    wf = wave.open(audio_file_path, 'rb')
 
-                # Play the sound by writing the audio data to the stream
-                while data:
-                    stream.write(data)
+                    # Open a stream
+                    stream = p.open(
+                        format=p.get_format_from_width(wf.getsampwidth()),
+                        channels=wf.getnchannels(),
+                        rate=wf.getframerate(),
+                        output=True
+                    )
+
+                    # Read data in chunks
                     data = wf.readframes(1024)
 
-                # Stop and close the stream
-                stream.stop_stream()
-                stream.close()
+                    # Play the sound by writing the audio data to the stream
+                    while data:
+                        stream.write(data)
+                        data = wf.readframes(1024)
 
-                # Close the file
-                wf.close()
+                    # Stop and close the stream
+                    stream.stop_stream()
+                    stream.close()
 
-                # Remove the wav file after playing
-                os.remove(wav_file_path)
+                    # Close the file
+                    wf.close()
+
+                elif file_extension == '.mp3':
+                    # Handling MP3 file playback using pydub
+                    audio = AudioSegment.from_file(audio_file_path, format="mp3")
+                    play(audio)
+
+                # Remove the audio file after playing
+                os.remove(audio_file_path)
 
             # Clear the event when audio finishes playing
             if audio_queue.empty():
