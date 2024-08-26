@@ -35,10 +35,10 @@ def call_llm_api(prompt):
     global prompt_history
     client = anthropic.Anthropic()
 
-    system_prompt = "You are integrated into a robot that communicates through a Raspberry Pi device. " +
-        "Text from the robot's microphone is passed to you via the Anthropic API. "+
-        "You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " +
-        "Keep things short and conversational. " +
+    system_prompt = "You are integrated into a robot that communicates through a Raspberry Pi device. " + \
+        "Text from the robot's microphone is passed to you via the Anthropic API. " + \
+        "You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
+        "Keep things short and conversational. " + \
         "Note that because voice transcription is being done with a simple Whisper model before the text is passed to you, there may be some errors in the text transcription. Use your best guess as to the intention of the speaker."
 
     new_prompt_series = prompt_history + [
