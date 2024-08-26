@@ -21,9 +21,11 @@ running = multiprocessing.Value('b', True)  # Use a multiprocessing.Value for ru
 audio_queue = multiprocessing.Queue()  # Queue to manage TTS audio playback
 
 # Piper TTS Setup
-voicedir = os.path.expanduser('~/Documents/piper/')
-model = voicedir + "en_GB-northern_english_male-medium.onnx"
-voice = PiperVoice.load(model)
+USE_LOCAL_TTS = False
+if USE_LOCAL_TTS:
+    voicedir = os.path.expanduser('~/Documents/piper/')
+    model = voicedir + "en_GB-northern_english_male-medium.onnx"
+    voice = PiperVoice.load(model)
 is_playing_audio = multiprocessing.Value('b', False)  # Use a multiprocessing.Value for shared memory
 
 # Face tracking variables
@@ -70,8 +72,6 @@ def call_llm_api(prompt):
 
 def text_to_speech(text):
     """Convert text to speech and play it back."""
-    USE_LOCAL_TTS = False
-
     sentences = text.split('. ')
 
     if USE_LOCAL_TTS:
@@ -101,7 +101,8 @@ def text_to_speech(text):
                     "voice_settings": {
                         "stability": 0.5,
                         "similarity_boost": 0.7
-                    }
+                    },
+                    "model_id": "eleven_turbo_v2"
                 }
 
                 response = requests.post(
