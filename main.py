@@ -1,5 +1,4 @@
-import threading
-import concurrent.futures
+import multiprocessing
 import cv2, sys, time, os, pkg_resources
 from picamera2 import Picamera2
 from pantilthat import *
@@ -15,14 +14,14 @@ load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/complete"
 prompt_history = []
-running = True  # Flag to control when threads should stop
-audio_queue = queue.Queue()  # Queue to manage TTS audio playback
+running = multiprocessing.Value('b', True)  # Use a multiprocessing.Value for running
+audio_queue = multiprocessing.Queue()  # Queue to manage TTS audio playback
 
 # Piper TTS Setup
 voicedir = os.path.expanduser('~/Documents/piper/')
 model = voicedir + "en_GB-northern_english_male-medium.onnx"
 voice = PiperVoice.load(model)
-is_playing_audio = threading.Event()
+is_playing_audio = multiprocessing.Value('b', False)  # Use a multiprocessing.Value for shared memory
 
 # Face tracking variables
 FRAME_W = 640
@@ -51,11 +50,11 @@ def call_llm_api(prompt):
         messages=new_prompt_series
     )
     prompt_history = new_prompt_series + [
-            {
-                "role": "assistant",
-                "content": message.content
-            }
-        ]
+        {
+            "role": "assistant",
+            "content": message.content
+        }
+    ]
 
     return message.content
 
@@ -70,18 +69,18 @@ def text_to_speech(text):
                 voice.synthesize(sentence.strip(), wav_file)
             audio_queue.put(wav_file_path)
 
-def audio_player():
+def audio_player(is_playing_audio, running):
     """Play audio files from the queue sequentially."""
     p = pyaudio.PyAudio()
 
     try:
-        while running or not audio_queue.empty():
+        while running.value or not audio_queue.empty():
             if not audio_queue.empty():
+                # Set the event to indicate audio is playing
+                is_playing_audio.value = True
+
                 wav_file_path = audio_queue.get()
                 wf = wave.open(wav_file_path, 'rb')
-
-                # Set the event to indicate audio is playing
-                is_playing_audio.set()
 
                 # Open a stream
                 stream = p.open(
@@ -109,37 +108,43 @@ def audio_player():
                 # Remove the wav file after playing
                 os.remove(wav_file_path)
 
-                # Clear the event when audio finishes playing
-                is_playing_audio.clear()
+            # Clear the event when audio finishes playing
+            if audio_queue.empty():
+                is_playing_audio.value = False
 
     finally:
         p.terminate()  # Make sure PyAudio is properly terminated
-        is_playing_audio.clear()  # Ensure the flag is clear if the loop ends
-
+        is_playing_audio.value = False  # Ensure the flag is clear if the loop ends
 
 def handle_transcription(text):
     print(f"\nReal-time transcription: {text}\n")
 
-    if len(prompt_history) == 0 and text == 'Thank you.': return
+    # don't get another response while the audio from the previous response is playing
+    if is_playing_audio.value:
+        return
+
+    # there's some bugginess where "Thank you" gets transcribed during periods of silence
+    if text =='Thank you.': return
     if text.strip() == '': return
 
     response = call_llm_api(text)
     print(f"\nLLM Response: {response}")
     text_to_speech('. '.join([r.text for r in response]))
 
-def listen_to_audio():
-    global running
+def listen_to_audio(is_playing_audio, running):
     recorder = AudioToTextRecorder()
     recorder_started = False  # Track whether the recorder has started
 
     try:
-        while running:
-            if is_playing_audio.is_set():
+        while running.value:
+            if is_playing_audio.value:
                 if recorder_started:
+                    print("Stopping recorder.")
                     recorder.stop()  # Explicitly stop the recorder if audio is playing
                     recorder_started = False  # Update the flag since the recorder is stopped
             else:
                 if not recorder_started:
+                    print("Starting recorder.")
                     recorder.start()  # Start the recorder if it hasn't been started yet
                     recorder_started = True  # Update the flag since the recorder has started
                 recorder.text(handle_transcription)
@@ -153,10 +158,8 @@ def listen_to_audio():
             recorder.stop()  # Ensure the recorder is stopped on exit
         print("Audio recorder stopped.")
 
-
-
-def track_face():
-    global cam_pan, cam_tilt, running
+def track_face(running):
+    global cam_pan, cam_tilt
 
     haar_path = pkg_resources.resource_filename('cv2', 'data/haarcascade_frontalface_default.xml')
     faceCascade = cv2.CascadeClassifier(haar_path)
@@ -169,7 +172,7 @@ def track_face():
     tilt(cam_tilt)
 
     try:
-        while running:
+        while running.value:
             frame = cam.capture_array()
             frame = cv2.flip(frame, 0)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -201,12 +204,20 @@ def track_face():
 
 if __name__ == "__main__":
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            executor.submit(listen_to_audio)
-            executor.submit(track_face)
-            executor.submit(audio_player)
+        p1 = multiprocessing.Process(target=listen_to_audio, args=(is_playing_audio, running))
+        p2 = multiprocessing.Process(target=track_face, args=(running,))
+        p3 = multiprocessing.Process(target=audio_player, args=(is_playing_audio, running))
+
+        p1.start()
+        p2.start()
+        p3.start()
+
+        p1.join()
+        p2.join()
+        p3.join()
+
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
-        running = False
-        is_playing_audio.clear()  # Clear the event flag if stopping
-        print("Stopped all threads.")
+        running.value = False
+        is_playing_audio.value = False  # Clear the flag if stopping
+        print("Stopped all processes.")

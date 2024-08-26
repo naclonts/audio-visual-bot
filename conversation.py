@@ -1,5 +1,6 @@
 import anthropic
 from dotenv import load_dotenv
+from time import sleep
 from RealtimeSTT import AudioToTextRecorder
 
 load_dotenv()
@@ -18,7 +19,7 @@ def call_llm_api(prompt):
             "content": prompt
         }
     ]
-  
+
     message = client.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
@@ -37,6 +38,7 @@ def call_llm_api(prompt):
 
 # Define callback functions
 def handle_transcription(text):
+    global recorder
     print(f"\nReal-time transcription: {text}\n")
 
     # there's some bugginess where "Thank you" gets printed at the beginning of every convo
@@ -44,8 +46,13 @@ def handle_transcription(text):
 
     if text.strip() == '': return
 
-    response = call_llm_api(text)
-    print(f"\nLLM Response: {response}")
+    #response = call_llm_api(text)
+    #print(f"\nLLM Response: {response}")
+    sleep(1)
+    if text == 'Stop.':
+        print("Stopping.")
+        recorder.stop()
+        return
 
 
 # Initialize the recorder with real-time transcription enabled
