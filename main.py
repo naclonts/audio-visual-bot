@@ -35,6 +35,12 @@ def call_llm_api(prompt):
     global prompt_history
     client = anthropic.Anthropic()
 
+    system_prompt = "You are integrated into a robot that communicates through a Raspberry Pi device. " +
+        "Text from the robot's microphone is passed to you via the Anthropic API. "+
+        "You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " +
+        "Keep things short and conversational. " +
+        "Note that because voice transcription is being done with a simple Whisper model before the text is passed to you, there may be some errors in the text transcription. Use your best guess as to the intention of the speaker."
+
     new_prompt_series = prompt_history + [
         {
             "role": "user",
@@ -46,7 +52,7 @@ def call_llm_api(prompt):
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
         temperature=0,
-        system="You are integrated into a robot that communicates through a Raspberry Pi device. Text from the robot's microphone is passed to you via the Anthropic API. You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. Keep things short and conversational. Speak in the style of Thomas Carlyle. Note that because voice transcription is being done with a simple Whisper model before the text is passed to you, there may be some errors in the text transcription. Use your best guess as to the intention of the speaker.",
+        system=system_prompt,
         messages=new_prompt_series
     )
     prompt_history = new_prompt_series + [
@@ -66,7 +72,7 @@ def text_to_speech(text):
         if sentence.strip():
             wav_file_path = f'output_{i}.wav'
             with wave.open(wav_file_path, 'w') as wav_file:
-                voice.synthesize(sentence.strip(), wav_file)
+                voice.synthesize(sentence.strip(), wav_file, sentence_silence=0.75)
             audio_queue.put(wav_file_path)
 
 def audio_player(is_playing_audio, running):
