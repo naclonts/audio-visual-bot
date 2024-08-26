@@ -1,4 +1,5 @@
 import threading
+import concurrent.futures
 import cv2, sys, time, os, pkg_resources
 from picamera2 import Picamera2
 from pantilthat import *
@@ -21,6 +22,7 @@ audio_queue = queue.Queue()  # Queue to manage TTS audio playback
 voicedir = os.path.expanduser('~/Documents/piper/')
 model = voicedir + "en_GB-northern_english_male-medium.onnx"
 voice = PiperVoice.load(model)
+is_playing_audio = threading.Event()
 
 # Face tracking variables
 FRAME_W = 640
@@ -59,7 +61,6 @@ def call_llm_api(prompt):
 
 def text_to_speech(text):
     """Convert text to speech and play it back."""
-    # Split text into sentences
     sentences = text.split('. ')
 
     for i, sentence in enumerate(sentences):
@@ -78,6 +79,9 @@ def audio_player():
             if not audio_queue.empty():
                 wav_file_path = audio_queue.get()
                 wf = wave.open(wav_file_path, 'rb')
+
+                # Set the event to indicate audio is playing
+                is_playing_audio.set()
 
                 # Open a stream
                 stream = p.open(
@@ -104,8 +108,14 @@ def audio_player():
 
                 # Remove the wav file after playing
                 os.remove(wav_file_path)
+
+                # Clear the event when audio finishes playing
+                is_playing_audio.clear()
+
     finally:
         p.terminate()  # Make sure PyAudio is properly terminated
+        is_playing_audio.clear()  # Ensure the flag is clear if the loop ends
+
 
 def handle_transcription(text):
     print(f"\nReal-time transcription: {text}\n")
@@ -120,14 +130,30 @@ def handle_transcription(text):
 def listen_to_audio():
     global running
     recorder = AudioToTextRecorder()
-    recorder.start()
+    recorder_started = False  # Track whether the recorder has started
+
     try:
         while running:
-            recorder.text(handle_transcription)
+            if is_playing_audio.is_set():
+                if recorder_started:
+                    recorder.stop()  # Explicitly stop the recorder if audio is playing
+                    recorder_started = False  # Update the flag since the recorder is stopped
+            else:
+                if not recorder_started:
+                    recorder.start()  # Start the recorder if it hasn't been started yet
+                    recorder_started = True  # Update the flag since the recorder has started
+                recorder.text(handle_transcription)
+
+            time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
     except KeyboardInterrupt:
-        pass  # Allow the main thread to handle the shutdown
+        print("KeyboardInterrupt caught in listen_to_audio")
     finally:
-        recorder.stop()
+        if recorder_started:
+            recorder.stop()  # Ensure the recorder is stopped on exit
+        print("Audio recorder stopped.")
+
+
 
 def track_face():
     global cam_pan, cam_tilt, running
@@ -171,25 +197,16 @@ def track_face():
 
             time.sleep(0.5)
     finally:
-        cam.stop()
+        cam.stop()  # Properly stop the camera when the thread is ending
 
 if __name__ == "__main__":
     try:
-        audio_thread = threading.Thread(target=listen_to_audio)
-        face_thread = threading.Thread(target=track_face)
-        playback_thread = threading.Thread(target=audio_player)
-
-        audio_thread.start()
-        face_thread.start()
-        playback_thread.start()
-
-        audio_thread.join()
-        face_thread.join()
-        playback_thread.join()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            executor.submit(listen_to_audio)
+            executor.submit(track_face)
+            executor.submit(audio_player)
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
         running = False
-        audio_thread.join()
-        face_thread.join()
-        playback_thread.join()
+        is_playing_audio.clear()  # Clear the event flag if stopping
         print("Stopped all threads.")
