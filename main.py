@@ -5,12 +5,22 @@ from pantilthat import *
 import anthropic
 from dotenv import load_dotenv
 from RealtimeSTT import AudioToTextRecorder
+import wave
+from piper.voice import PiperVoice
+import queue
+import pyaudio
 
 load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/complete"
 prompt_history = []
 running = True  # Flag to control when threads should stop
+audio_queue = queue.Queue()  # Queue to manage TTS audio playback
+
+# Piper TTS Setup
+voicedir = os.path.expanduser('~/Documents/piper/')
+model = voicedir + "en_GB-northern_english_male-medium.onnx"
+voice = PiperVoice.load(model)
 
 # Face tracking variables
 FRAME_W = 640
@@ -47,6 +57,55 @@ def call_llm_api(prompt):
 
     return message.content
 
+def text_to_speech(text):
+    """Convert text to speech and play it back."""
+    # Split text into sentences
+    sentences = text.split('. ')
+
+    for i, sentence in enumerate(sentences):
+        if sentence.strip():
+            wav_file_path = f'output_{i}.wav'
+            with wave.open(wav_file_path, 'w') as wav_file:
+                voice.synthesize(sentence.strip(), wav_file)
+            audio_queue.put(wav_file_path)
+
+def audio_player():
+    """Play audio files from the queue sequentially."""
+    p = pyaudio.PyAudio()
+
+    while running or not audio_queue.empty():
+        if not audio_queue.empty():
+            wav_file_path = audio_queue.get()
+            wf = wave.open(wav_file_path, 'rb')
+
+            # Open a stream
+            stream = p.open(
+                format=p.get_format_from_width(wf.getsampwidth()),
+                channels=wf.getnchannels(),
+                rate=wf.getframerate(),
+                output=True
+            )
+
+            # Read data in chunks
+            data = wf.readframes(1024)
+
+            # Play the sound by writing the audio data to the stream
+            while data:
+                stream.write(data)
+                data = wf.readframes(1024)
+
+            # Stop and close the stream
+            stream.stop_stream()
+            stream.close()
+
+            # Close the file
+            wf.close()
+
+            # Remove the wav file after playing
+            os.remove(wav_file_path)
+
+    p.terminate()
+
 def handle_transcription(text):
     print(f"\nReal-time transcription: {text}\n")
 
@@ -55,6 +114,7 @@ def handle_transcription(text):
 
     response = call_llm_api(text)
     print(f"\nLLM Response: {response}")
+    text_to_speech(response)  # Convert LLM response to speech
 
 def listen_to_audio():
     global running
@@ -113,15 +173,19 @@ if __name__ == "__main__":
     try:
         audio_thread = threading.Thread(target=listen_to_audio)
         face_thread = threading.Thread(target=track_face)
+        playback_thread = threading.Thread(target=audio_player)
 
         audio_thread.start()
         face_thread.start()
+        playback_thread.start()
 
         audio_thread.join()
         face_thread.join()
+        playback_thread.join()
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
         running = False  # Set the flag to stop the threads
         audio_thread.join()
         face_thread.join()
+        playback_thread.join()
         print("Stopped all threads.")
