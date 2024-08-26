@@ -73,38 +73,39 @@ def audio_player():
     """Play audio files from the queue sequentially."""
     p = pyaudio.PyAudio()
 
-    while running or not audio_queue.empty():
-        if not audio_queue.empty():
-            wav_file_path = audio_queue.get()
-            wf = wave.open(wav_file_path, 'rb')
+    try:
+        while running or not audio_queue.empty():
+            if not audio_queue.empty():
+                wav_file_path = audio_queue.get()
+                wf = wave.open(wav_file_path, 'rb')
 
-            # Open a stream
-            stream = p.open(
-                format=p.get_format_from_width(wf.getsampwidth()),
-                channels=wf.getnchannels(),
-                rate=wf.getframerate(),
-                output=True
-            )
+                # Open a stream
+                stream = p.open(
+                    format=p.get_format_from_width(wf.getsampwidth()),
+                    channels=wf.getnchannels(),
+                    rate=wf.getframerate(),
+                    output=True
+                )
 
-            # Read data in chunks
-            data = wf.readframes(1024)
-
-            # Play the sound by writing the audio data to the stream
-            while data:
-                stream.write(data)
+                # Read data in chunks
                 data = wf.readframes(1024)
 
-            # Stop and close the stream
-            stream.stop_stream()
-            stream.close()
+                # Play the sound by writing the audio data to the stream
+                while data:
+                    stream.write(data)
+                    data = wf.readframes(1024)
 
-            # Close the file
-            wf.close()
+                # Stop and close the stream
+                stream.stop_stream()
+                stream.close()
 
-            # Remove the wav file after playing
-            os.remove(wav_file_path)
+                # Close the file
+                wf.close()
 
-    p.terminate()
+                # Remove the wav file after playing
+                os.remove(wav_file_path)
+    finally:
+        p.terminate()  # Make sure PyAudio is properly terminated
 
 def handle_transcription(text):
     print(f"\nReal-time transcription: {text}\n")
@@ -141,33 +142,36 @@ def track_face():
     pan(cam_pan)
     tilt(cam_tilt)
 
-    while running:
-        frame = cam.capture_array()
-        frame = cv2.flip(frame, 0)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray)
+    try:
+        while running:
+            frame = cam.capture_array()
+            frame = cv2.flip(frame, 0)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = faceCascade.detectMultiScale(gray)
 
-        if len(faces) > 0:
-            print(f'\n---- Found {len(faces)} faces ----')
+            if len(faces) > 0:
+                print(f'\n---- Found {len(faces)} faces ----')
 
-        for (x, y, w, h) in faces:
-            x = x + (w / 2)
-            y = y + (h / 2)
-            relative_x = float(x / FRAME_W) - 0.5
-            relative_y = float(y / FRAME_H) - 0.5
-            angle_horizontal = relative_x * CAMERA_HORIZONTAL_FOV
-            angle_vertical = relative_y * CAMERA_VERTICAL_FOV
+            for (x, y, w, h) in faces:
+                x = x + (w / 2)
+                y = y + (h / 2)
+                relative_x = float(x / FRAME_W) - 0.5
+                relative_y = float(y / FRAME_H) - 0.5
+                angle_horizontal = relative_x * CAMERA_HORIZONTAL_FOV
+                angle_vertical = relative_y * CAMERA_VERTICAL_FOV
 
-            cam_pan = get_pan() + angle_horizontal
-            cam_tilt = get_tilt() + angle_vertical
+                cam_pan = get_pan() + angle_horizontal
+                cam_tilt = get_tilt() + angle_vertical
 
-            cam_pan = max(-90, min(90, cam_pan))
-            cam_tilt = max(-90, min(90, cam_tilt))
+                cam_pan = max(-90, min(90, cam_pan))
+                cam_tilt = max(-90, min(90, cam_tilt))
 
-            pan(int(cam_pan))
-            tilt(int(cam_tilt))
+                pan(int(cam_pan))
+                tilt(int(cam_tilt))
 
-        time.sleep(0.5)
+            time.sleep(0.5)
+    finally:
+        cam.stop()
 
 if __name__ == "__main__":
     try:
@@ -184,7 +188,7 @@ if __name__ == "__main__":
         playback_thread.join()
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
-        running = False  # Set the flag to stop the threads
+        running = False
         audio_thread.join()
         face_thread.join()
         playback_thread.join()
