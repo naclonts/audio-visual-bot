@@ -98,7 +98,7 @@ def set_servos(pan, tilt):
 
         # if the tilt angle is within the range, tilt
         if in_servo_range(tilt_angle, servo_range[0], servo_range[1]):
-            pth.tilt(min(90, tilt_angle))
+            pth.tilt(min(90, tilt_angle + 45))
 
 if __name__ == '__main__':
     haar_path = pkg_resources.resource_filename('cv2', 'data/haarcascade_frontalface_default.xml')
@@ -119,15 +119,15 @@ if __name__ == '__main__':
 
         # pan and tilt values will be managed by independent PIDs
         pan = manager.Value('i', 0)
-        tilt = manager.Value('i', -65)
+        tilt = manager.Value('i', -0)
 
         # set PID values
-        pan_p = manager.Value('f', 0.025)
-        pan_i = manager.Value('f', 0.0125)
+        pan_p = manager.Value('f', 0.015)
+        pan_i = manager.Value('f', 0.0155)
         pan_d = manager.Value('f', 0.00005)
 
-        tilt_p = manager.Value('f', 0.11)
-        tilt_i = manager.Value('f', 0.10)
+        tilt_p = manager.Value('f', 0.04)
+        tilt_i = manager.Value('f', 0.05)
         tilt_d = manager.Value('f', 0.0005)
 
         # we have 4 processes to start:
@@ -138,7 +138,7 @@ if __name__ == '__main__':
         processes = [
             Process(target=find_object_center, args=({"cascade": haar_path}, obj_x, obj_y, center_x, center_y)),
             Process(target=pid_process, args=(pan, pan_p, pan_i, pan_d, obj_x, center_x)),
-            #Process(target=pid_process, args=(tilt, tilt_p, tilt_i, tilt_d, obj_y, center_y)),
+            Process(target=pid_process, args=(tilt, tilt_p, tilt_i, tilt_d, obj_y, center_y)),
             Process(target=set_servos, args=(pan, tilt))
         ]
 
