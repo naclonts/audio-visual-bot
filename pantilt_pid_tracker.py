@@ -3,7 +3,7 @@ from picamera2 import Picamera2
 from image_search.object_center import ObjectCenter
 from image_search.pid import PID
 from adafruit_servokit import ServoKit
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 import numpy as np
 import pkg_resources
 import signal
@@ -44,8 +44,6 @@ def find_object_center(args, obj_x, obj_y, center_x, center_y):
     # Initialize Tkinter in the main process
     tk_root = tk.Tk()
     tk_root.title("Pi Camera Stream")
-
-    # Create a label to display the video frames
     label = tk.Label(tk_root)
     label.pack()
 
@@ -66,17 +64,21 @@ def find_object_center(args, obj_x, obj_y, center_x, center_y):
         # Find the object's location
         objectLoc = obj.update(frame, (center_x.value, center_y.value))
 
+        pil_image = Image.fromarray(frame)
+        draw = ImageDraw.Draw(pil_image)
+
         if objectLoc is not None:
             ((objX, objY), rect) = objectLoc
             obj_x.value = objX
             obj_y.value = objY
 
             # Draw the object on the frame (uncomment if you have drawing code)
-            # (x, y, w, h) = rect
-            # cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0))
+            if rect is not None:
+                (x, y, w, h) = rect
+                draw.rectangle([x, y, x + w, y + h], outline="green", width=2)
 
         # Convert the frame to an ImageTk object
-        image = ImageTk.PhotoImage(image=Image.fromarray(frame))
+        image = ImageTk.PhotoImage(pil_image)
         # Update the label with the new frame
         label.config(image=image)
         label.image = image
