@@ -2,7 +2,7 @@ from multiprocessing import Manager, Process
 from picamera2 import Picamera2
 from image_search.object_center import ObjectCenter
 from image_search.pid import PID
-import pantilthat as pth
+from gpiozero import AngularServo
 import pkg_resources
 import signal
 import time
@@ -10,6 +10,8 @@ import sys
 import cv2
 
 servo_range = (-90, 90)
+servo_pan  = AngularServo(18, min_pulse_width=0.0006, max_pulse_width=0.0023)
+servo_tilt = AngularServo(19, min_pulse_width=0.0006, max_pulse_width=0.0023)
 
 # thanks to Adrian Rosebrock whose code this was based on:
 # https://pyimagesearch.com/2019/04/01/pan-tilt-face-tracking-with-a-raspberry-pi-and-opencv/
@@ -20,8 +22,8 @@ def signal_handler(sig, frame):
     print("[INFO] You pressed `ctrl + c`! Exiting...")
 
     # disable the servos
-    pth.servo_enable(1, False)
-    pth.servo_enable(2, False)
+    servo_pan.close()
+    servo_tilt.close()
 
     # exit
     sys.exit()
@@ -94,21 +96,25 @@ def set_servos(pan, tilt):
 
         # if the pan angle is within the range, pan
         if in_servo_range(pan_angle, servo_range[0], servo_range[1]):
-            pth.pan(pan_angle)
+            pan_to(pan_angle)
 
         # if the tilt angle is within the range, tilt
         if in_servo_range(tilt_angle, servo_range[0], servo_range[1]):
-            pth.tilt(min(90, tilt_angle + 45))
+            tilt_to(tilt_angle + 0)
+
+def pan_to(angle):
+    return
+    servo_pan.angle = angle
+
+def tilt_to(angle):
+    return
+    servo_tilt.angle = angle
 
 if __name__ == '__main__':
     haar_path = pkg_resources.resource_filename('cv2', 'data/haarcascade_frontalface_default.xml')
 
     # initialize a manager to store data between the processes
     with Manager() as manager:
-        # enable the servos
-        pth.servo_enable(1, True)
-        pth.servo_enable(2, True)
-
         # set the initial values for the object center and pan/tilt
         center_x = manager.Value('i', 0)
         center_y = manager.Value('i', 0)
@@ -119,16 +125,18 @@ if __name__ == '__main__':
 
         # pan and tilt values will be managed by independent PIDs
         pan = manager.Value('i', 0)
-        tilt = manager.Value('i', -0)
+        tilt = manager.Value('i', 45)
+        pan_to(pan.value)
+        tilt_to(tilt.value)
 
         # set PID values
-        pan_p = manager.Value('f', 0.015)
-        pan_i = manager.Value('f', 0.0155)
-        pan_d = manager.Value('f', 0.00005)
+        pan_p = manager.Value('f', 0.000)
+        pan_i = manager.Value('f', 0.00)
+        pan_d = manager.Value('f', 0.00000)
 
-        tilt_p = manager.Value('f', 0.04)
-        tilt_i = manager.Value('f', 0.05)
-        tilt_d = manager.Value('f', 0.0005)
+        tilt_p = manager.Value('f', 0.00)
+        tilt_i = manager.Value('f', 0.00)
+        tilt_d = manager.Value('f', 0.0000)
 
         # we have 4 processes to start:
         # 1. find_object_center - finds the object center
@@ -151,5 +159,7 @@ if __name__ == '__main__':
             process.join()
 
         # disable the servos
-        pth.servo_enable(1, False)
-        pth.servo_enable(2, False)
+        pan_to(0)
+        tilt_to(75)
+        servo_pan.close()
+        servo_tilt.close()
