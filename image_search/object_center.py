@@ -15,7 +15,6 @@ class ObjectCenter:
 
         # check to see if a face was found
         if len(rects) > 0:
-            print('---- Face found! rects:', rects)
             # extract the bounding box of the face and compute its
             # center
             (x, y, w, h) = rects[0]
@@ -25,5 +24,5 @@ class ObjectCenter:
             # return the center (x, y)-coordinates of the face
             return ((faceX, faceY), rects[0])
 
-        # default to returning the center (x, y)-coordinates of the frame
-        return (frame_center, None)
+        # return None if no faces found
+        return None

@@ -1,5 +1,7 @@
 import time
 
+# thanks to Adrian Rosebrock whose code this was based on:
+# https://pyimagesearch.com/2019/04/01/pan-tilt-face-tracking-with-a-raspberry-pi-and-opencv/
 class PID:
     def __init__(self, kP=1, kI=0, kD=0):
         # initialize gains
@@ -20,10 +22,7 @@ class PID:
         self.cI = 0
         self.cD = 0
 
-    def update(self, error, sleep=0.2):
-        # pause for a bit
-        time.sleep(sleep)
-
+    def update(self, error):
         # grab the current time and calculate delta time
         self.currTime = time.time()
         deltaTime = self.currTime - self.prevTime

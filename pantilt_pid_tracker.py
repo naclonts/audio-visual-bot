@@ -3,7 +3,7 @@ from picamera2 import Picamera2
 from image_search.object_center import ObjectCenter
 from image_search.pid import PID
 from adafruit_servokit import ServoKit
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 import numpy as np
 import pkg_resources
 import signal
@@ -16,9 +16,6 @@ servo_range = (0, 180)
 # servo_pan  = AngularServo(18, min_pulse_width=0.0006, max_pulse_width=0.0023)
 # servo_tilt = AngularServo(19, min_pulse_width=0.0006, max_pulse_width=0.0023)
 servo_kit = ServoKit(channels=16)
-
-# thanks to Adrian Rosebrock whose code this was based on:
-# https://pyimagesearch.com/2019/04/01/pan-tilt-face-tracking-with-a-raspberry-pi-and-opencv/
 
 # handle a keyboard interrupt
 def signal_handler(sig, frame):
@@ -49,23 +46,24 @@ def find_object_center(args, obj_x, obj_y, center_x, center_y):
 
     # Initialize the object center finder
     obj = ObjectCenter(args["cascade"])
+    fnt = ImageFont.truetype("Pillow/Tests/fonts/FreeMono.ttf", 16)
 
     # Function to update the frame
     def update_frame():
         # Capture frame from the camera
         frame = cam.capture_array()
         frame = np.flipud(frame)  # Flip vertically without OpenCV
+        pil_image = Image.fromarray(frame)
+        draw = ImageDraw.Draw(pil_image)
 
         # Calculate the center of the frame
         (H, W) = frame.shape[:2]
         center_x.value = W // 2
         center_y.value = H // 2
+        draw.rectangle([center_x.value-1, center_y.value-1, center_x.value + 2, center_y.value + 2], fill="blue")
 
         # Find the object's location
         objectLoc = obj.update(frame, (center_x.value, center_y.value))
-
-        pil_image = Image.fromarray(frame)
-        draw = ImageDraw.Draw(pil_image)
 
         if objectLoc is not None:
             ((objX, objY), rect) = objectLoc
@@ -76,6 +74,16 @@ def find_object_center(args, obj_x, obj_y, center_x, center_y):
             if rect is not None:
                 (x, y, w, h) = rect
                 draw.rectangle([x, y, x + w, y + h], outline="green", width=2)
+
+            draw.rectangle([obj_x.value-1, obj_y.value-1, obj_x.value + 2, obj_y.value + 2], fill="red")
+            draw.text((10, H - 60), f"Center: ({center_x.value}, {center_y.value})", font=fnt, fill="white")
+            draw.text((10, H - 40), f"Object: ({obj_x.value}, {obj_y.value})", font=fnt, fill="white")
+            draw.text((10, H - 20), f"Diff:   ({obj_x.value - center_x.value}, {obj_y.value - center_y.value})", font=fnt, fill="white")
+
+        # if a face wasn't found, set the object coords to none to prevent PID errors from accumulating
+        else:
+            obj_x.value = None
+            obj_y.value = None
 
         # Convert the frame to an ImageTk object
         image = ImageTk.PhotoImage(pil_image)
@@ -97,13 +105,24 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
     p = PID(p, i, d)
     p.initialize()
 
+    pan_angle = 90
+
     # loop indefinitely
     while True:
+        if obj_coord.value is None:
+            continue
+
         # calculate the error
-        error = center_coord.value - obj_coord.value
+        error = obj_coord.value - center_coord.value
 
         # update the value
-        output.value = p.update(error)
+        adjustment = p.update(error)
+
+        pan_angle = max(0, min(180, pan_angle + adjustment))
+
+        output.value = pan_angle
+
+        time.sleep(0.05)
 
 def in_servo_range(val, start, end):
     # determine the input value is in the range start to end
@@ -116,12 +135,8 @@ def set_servos(pan, tilt):
     last_pan_value = pan.value
 
     while True:
-        pan_angle = -1 * pan.value
-        tilt_angle = -1 * tilt.value
-
-        if pan.value != last_pan_value:
-            print(f"pan: {pan_angle}, last_pan: {last_pan_value}")
-            last_pan_value = pan.value
+        pan_angle = pan.value
+        tilt_angle = tilt.value
 
         # if the pan angle is within the range, pan
         if in_servo_range(pan_angle, servo_range[0], servo_range[1]):
@@ -131,8 +146,11 @@ def set_servos(pan, tilt):
         if in_servo_range(tilt_angle, servo_range[0], servo_range[1]):
             tilt_to(tilt_angle + 0)
 
+        last_pan_value += pan_angle
+
 def pan_to(angle):
-    return
+    if angle == 0:
+        return
     servo_kit.servo[0].angle = angle
 
 def tilt_to(angle):
@@ -161,9 +179,9 @@ if __name__ == '__main__':
         tilt_to(tilt.value)
 
         # set PID values
-        pan_p = manager.Value('f', 0.015)
-        pan_i = manager.Value('f', 0.0155)
-        pan_d = manager.Value('f', 0.00005)
+        pan_p = manager.Value('f', 0.0125)
+        pan_i = manager.Value('f', 0.0002)
+        pan_d = manager.Value('f', 0.00000)
 
         tilt_p = manager.Value('f', 0.00)
         tilt_i = manager.Value('f', 0.00)
