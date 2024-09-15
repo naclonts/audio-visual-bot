@@ -105,7 +105,7 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
     p = PID(p, i, d)
     p.initialize()
 
-    pan_angle = 90
+    angle = output.value
 
     # loop indefinitely
     while True:
@@ -118,9 +118,9 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
         # update the value
         adjustment = p.update(error)
 
-        pan_angle = max(0, min(180, pan_angle + adjustment))
+        angle = max(0, min(180, angle + adjustment))
 
-        output.value = pan_angle
+        output.value = angle
 
         time.sleep(0.05)
 
@@ -149,14 +149,9 @@ def set_servos(pan, tilt):
         last_pan_value += pan_angle
 
 def pan_to(angle):
-    if angle == 0:
-        return
     servo_kit.servo[0].angle = angle
 
 def tilt_to(angle):
-    return
-    # if angle < 75 or angle > 180:
-    #     return
     servo_kit.servo[1].angle = angle
 
 if __name__ == '__main__':
@@ -180,12 +175,12 @@ if __name__ == '__main__':
 
         # set PID values
         pan_p = manager.Value('f', 0.0125)
-        pan_i = manager.Value('f', 0.0002)
-        pan_d = manager.Value('f', 0.00000)
+        pan_i = manager.Value('f', 0.0005)
+        pan_d = manager.Value('f', 0.001)
 
-        tilt_p = manager.Value('f', 0.00)
-        tilt_i = manager.Value('f', 0.00)
-        tilt_d = manager.Value('f', 0.0000)
+        tilt_p = manager.Value('f', 0.01)
+        tilt_i = manager.Value('f', 0.001)
+        tilt_d = manager.Value('f', 0.001)
 
         # we have 4 processes to start:
         # 1. find_object_center - finds the object center
