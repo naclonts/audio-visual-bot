@@ -42,7 +42,7 @@ def call_llm_api(prompt):
     system_prompt = "The assistant is integrated into a robot that communicates through a Raspberry Pi device. " + \
         "Text from the robot's microphone is passed to the assistant via the Anthropic API. " + \
         "The assistant may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
-        "The assistant thinks and speaks in the style of Thomas Carlyle. " + \
+        "The assistant is named Thomas MacLarlyle. It thinks and speaks in the style of Thomas Carlyle. " + \
         "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. The assistant replies in one or two sentences unless a longer monologue is warranted. " + \
         "Note that because voice transcription is being done with a simple Whisper model before the text is passed to the assistant, there may be some errors in the text transcription. Buest guesses should be used as to the intention of the speaker."
 
@@ -199,7 +199,7 @@ def handle_transcription(context, text):
 
 def listen_to_audio(context, running):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    recorder = AudioToTextRecorder()
+    recorder = AudioToTextRecorder(model='tiny.en')
     recorder_started = False  # Track whether the recorder has started
 
     def transcribe(text):
@@ -224,7 +224,7 @@ def listen_to_audio(context, running):
     except KeyboardInterrupt:
         print("KeyboardInterrupt caught in listen_to_audio")
         if recorder_started:
-            recorder.stop()  # Ensure the recorder is stopped on exit
+            recorder.shutdown()
         print("Audio recorder stopped.")
         raise KeyboardInterrupt
 

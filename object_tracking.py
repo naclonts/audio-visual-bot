@@ -110,11 +110,14 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
     # loop indefinitely
     while True:
         time.sleep(0.05)
-        if obj_coord.value is None:
-            continue
 
         # calculate the error
-        error = obj_coord.value - center_coord.value
+        error = (obj_coord.value or 0) - (center_coord.value or 0)
+
+        # I tried returning before the `error` calculation, but occasionally one of these values
+        # comes out to none when `error` is calculated. TODO look to see if the state isn't being managed correctly
+        if obj_coord.value is None or center_coord.value is None:
+            continue
 
         # update the value
         adjustment = p.update(error)
