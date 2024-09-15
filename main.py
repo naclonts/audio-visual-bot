@@ -1,17 +1,17 @@
 import multiprocessing
-import cv2, sys, time, os, pkg_resources
-from picamera2 import Picamera2
+import time, os
 from pantilthat import *
 import anthropic
 from dotenv import load_dotenv
 from RealtimeSTT import AudioToTextRecorder
 import wave
 from piper.voice import PiperVoice
-import queue
 import pyaudio
 import requests
 from pydub import AudioSegment
 from pydub.playback import play
+
+from object_tracking import get_object_tracking_processes
 
 load_dotenv()
 
@@ -40,12 +40,12 @@ def call_llm_api(prompt):
     global prompt_history
     client = anthropic.Anthropic()
 
-    system_prompt = "You are integrated into a robot that communicates through a Raspberry Pi device. " + \
-        "Text from the robot's microphone is passed to you via the Anthropic API. " + \
-        "You may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
-        "Speak in the style of Thomas Carlyle, but " + \
-        "Keep things short and conversational. You should be brief to allow an interactive exchange. " + \
-        "Note that because voice transcription is being done with a simple Whisper model before the text is passed to you, there may be some errors in the text transcription. Use your best guess as to the intention of the speaker."
+    system_prompt = "The assistant is integrated into a robot that communicates through a Raspberry Pi device. " + \
+        "Text from the robot's microphone is passed to the assistant via the Anthropic API. " + \
+        "The assistant may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
+        "The assistant thinks and speaks in the style of Thomas Carlyle. " + \
+        "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. " + \
+        "Note that because voice transcription is being done with a simple Whisper model before the text is passed to the assistant, there may be some errors in the text transcription. Buest guesses should be used as to the intention of the speaker."
 
     new_prompt_series = prompt_history + [
         {
@@ -221,66 +221,25 @@ def listen_to_audio(is_playing_audio, running):
             recorder.stop()  # Ensure the recorder is stopped on exit
         print("Audio recorder stopped.")
 
-def track_face(running):
-    global cam_pan, cam_tilt
-
-    haar_path = pkg_resources.resource_filename('cv2', 'data/haarcascade_frontalface_default.xml')
-    faceCascade = cv2.CascadeClassifier(haar_path)
-    cam = Picamera2()
-    cam.configure(cam.create_video_configuration(main={"format": "XRGB8888", "size": (FRAME_W, FRAME_H)}))
-    cam.start()
-    time.sleep(1)
-
-    pan(cam_pan)
-    tilt(cam_tilt)
-
-    try:
-        while running.value:
-            frame = cam.capture_array()
-            frame = cv2.flip(frame, 0)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = faceCascade.detectMultiScale(gray)
-
-            if len(faces) > 0:
-                print(f'\n---- Found {len(faces)} faces ----')
-
-            for (x, y, w, h) in faces:
-                x = x + (w / 2)
-                y = y + (h / 2)
-                relative_x = float(x / FRAME_W) - 0.5
-                relative_y = float(y / FRAME_H) - 0.5
-                angle_horizontal = relative_x * CAMERA_HORIZONTAL_FOV
-                angle_vertical = relative_y * CAMERA_VERTICAL_FOV
-
-                cam_pan = get_pan() + angle_horizontal
-                cam_tilt = get_tilt() + angle_vertical
-
-                cam_pan = max(-90, min(90, cam_pan))
-                cam_tilt = max(-90, min(90, cam_tilt))
-
-                pan(int(cam_pan))
-                tilt(int(cam_tilt))
-
-            time.sleep(0.5)
-    finally:
-        cam.stop()  # Properly stop the camera when the thread is ending
-
 if __name__ == "__main__":
     try:
-        p1 = multiprocessing.Process(target=listen_to_audio, args=(is_playing_audio, running))
-        p2 = multiprocessing.Process(target=track_face, args=(running,))
-        p3 = multiprocessing.Process(target=audio_player, args=(is_playing_audio, running))
+        manager = multiprocessing.Manager()
+        processes = [
+            multiprocessing.Process(target=listen_to_audio, args=(is_playing_audio, running)),
+            multiprocessing.Process(target=audio_player, args=(is_playing_audio, running)),
+        ]
 
-        p1.start()
-        p2.start()
-        p3.start()
+        processes += get_object_tracking_processes(manager)
 
-        p1.join()
-        p2.join()
-        p3.join()
+        for process in processes:
+            process.start()
+
+        for process in processes:
+            process.join()
 
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
         running.value = False
         is_playing_audio.value = False  # Clear the flag if stopping
-        print("Stopped all processes.")
+        print("Stopped all processes. Exiting.")
+        sys.exit()
