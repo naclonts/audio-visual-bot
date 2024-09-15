@@ -1,5 +1,5 @@
 import multiprocessing
-import time, os
+import time, os, signal
 from pantilthat import *
 import anthropic
 from dotenv import load_dotenv
@@ -26,7 +26,6 @@ if USE_LOCAL_TTS:
     voicedir = os.path.expanduser('~/Documents/piper/')
     model = voicedir + "en_GB-northern_english_male-medium.onnx"
     voice = PiperVoice.load(model)
-is_playing_audio = multiprocessing.Value('b', False)  # Use a multiprocessing.Value for shared memory
 
 # Face tracking variables
 FRAME_W = 640
@@ -44,7 +43,7 @@ def call_llm_api(prompt):
         "Text from the robot's microphone is passed to the assistant via the Anthropic API. " + \
         "The assistant may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
         "The assistant thinks and speaks in the style of Thomas Carlyle. " + \
-        "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. " + \
+        "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. The assistant replies in one or two sentences unless a longer monologue is warranted. " + \
         "Note that because voice transcription is being done with a simple Whisper model before the text is passed to the assistant, there may be some errors in the text transcription. Buest guesses should be used as to the intention of the speaker."
 
     new_prompt_series = prompt_history + [
@@ -121,17 +120,19 @@ def text_to_speech(text):
                 else:
                     print(f"Error: {response.status_code} - {response.text}")
 
-def audio_player(is_playing_audio, running):
+def audio_player(context, running):
     """Play audio files from the queue sequentially."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     p = pyaudio.PyAudio()
 
     try:
         while running.value or not audio_queue.empty():
             if not audio_queue.empty():
                 # Set the event to indicate audio is playing
-                is_playing_audio.value = True
+                context.is_playing_audio = True
 
                 audio_file_path = audio_queue.get()
+                print(f"Playing audio file: {audio_file_path}. context.is_playing_audio: {context.is_playing_audio}")
 
                 # Check the file extension
                 file_extension = os.path.splitext(audio_file_path)[1].lower()
@@ -169,21 +170,23 @@ def audio_player(is_playing_audio, running):
                     play(audio)
 
                 # Remove the audio file after playing
+                print(f"Removing audio file: {audio_file_path}. Queue empty: {audio_queue.empty()}")
                 os.remove(audio_file_path)
 
             # Clear the event when audio finishes playing
             if audio_queue.empty():
-                is_playing_audio.value = False
+                context.is_playing_audio = False
 
     finally:
         p.terminate()  # Make sure PyAudio is properly terminated
-        is_playing_audio.value = False  # Ensure the flag is clear if the loop ends
+        context.is_playing_audio = False  # Ensure the flag is clear if the loop ends
 
-def handle_transcription(text):
-    print(f"\nReal-time transcription: {text}\n")
+def handle_transcription(context, text):
+    print(f"\nReal-time transcription: {text}.\nis_playing_audio: {context.is_playing_audio}\n")
 
     # don't get another response while the audio from the previous response is playing
-    if is_playing_audio.value:
+    if context.is_playing_audio:
+        print("Audio is playing. Skipping transcription.")
         return
 
     # there's some bugginess where "Thank you" gets transcribed during periods of silence
@@ -194,13 +197,17 @@ def handle_transcription(text):
     print(f"\nLLM Response: {response}")
     text_to_speech('. '.join([r.text for r in response]))
 
-def listen_to_audio(is_playing_audio, running):
+def listen_to_audio(context, running):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     recorder = AudioToTextRecorder()
     recorder_started = False  # Track whether the recorder has started
 
+    def transcribe(text):
+        return handle_transcription(context, text)
+
     try:
         while running.value:
-            if is_playing_audio.value:
+            if context.is_playing_audio:
                 if recorder_started:
                     print("Stopping recorder.")
                     recorder.stop()  # Explicitly stop the recorder if audio is playing
@@ -210,23 +217,26 @@ def listen_to_audio(is_playing_audio, running):
                     print("Starting recorder.")
                     recorder.start()  # Start the recorder if it hasn't been started yet
                     recorder_started = True  # Update the flag since the recorder has started
-                recorder.text(handle_transcription)
+                recorder.text(transcribe)
 
             time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt caught in listen_to_audio")
-    finally:
         if recorder_started:
             recorder.stop()  # Ensure the recorder is stopped on exit
         print("Audio recorder stopped.")
+        raise KeyboardInterrupt
 
 if __name__ == "__main__":
     try:
         manager = multiprocessing.Manager()
+        context = manager.Namespace()
+        context.is_playing_audio = False
+
         processes = [
-            multiprocessing.Process(target=listen_to_audio, args=(is_playing_audio, running)),
-            multiprocessing.Process(target=audio_player, args=(is_playing_audio, running)),
+            multiprocessing.Process(target=listen_to_audio, args=(context, running)),
+            multiprocessing.Process(target=audio_player, args=(context, running)),
         ]
 
         processes += get_object_tracking_processes(manager)
@@ -240,6 +250,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
         running.value = False
-        is_playing_audio.value = False  # Clear the flag if stopping
+        context.is_playing_audio = False  # Clear the flag if stopping
         print("Stopped all processes. Exiting.")
-        sys.exit()
+        time.sleep(0.5)
+        os._exit(1)

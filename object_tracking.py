@@ -6,15 +6,13 @@ from adafruit_servokit import ServoKit
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 import numpy as np
 import pkg_resources
+import os
 import signal
 import time
-import sys
 import tkinter as tk
 
 
 servo_range = (0, 180)
-# servo_pan  = AngularServo(18, min_pulse_width=0.0006, max_pulse_width=0.0023)
-# servo_tilt = AngularServo(19, min_pulse_width=0.0006, max_pulse_width=0.0023)
 servo_kit = ServoKit(channels=16)
 
 # handle a keyboard interrupt
@@ -27,7 +25,7 @@ def signal_handler(sig, frame):
     servo_kit.servo[1].angle = 180
 
     # exit
-    sys.exit()
+    os._exit(1)
 
 def find_object_center(args, obj_x, obj_y, center_x, center_y):
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ignore SIGINT in the child process
@@ -101,7 +99,9 @@ def find_object_center(args, obj_x, obj_y, center_x, center_y):
     tk_root.mainloop()
 
 def pid_process(output, p, i, d, obj_coord, center_coord):
-    # create a PID and initialize it
+    """
+    Run a PID control loop to maintain the object in the center of the frame.
+    """
     p = PID(p, i, d)
     p.initialize()
 
@@ -109,6 +109,7 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
 
     # loop indefinitely
     while True:
+        time.sleep(0.05)
         if obj_coord.value is None:
             continue
 
@@ -117,12 +118,9 @@ def pid_process(output, p, i, d, obj_coord, center_coord):
 
         # update the value
         adjustment = p.update(error)
-
-        angle = max(0, min(180, angle + adjustment))
+        angle = max(servo_range[0], min(servo_range[1], angle + adjustment))
 
         output.value = angle
-
-        time.sleep(0.05)
 
 def in_servo_range(val, start, end):
     # determine the input value is in the range start to end
@@ -181,7 +179,7 @@ def get_object_tracking_processes(manager):
     tilt_to(tilt.value)
 
     # set PID values
-    pan_p = manager.Value('f', 0.0225)
+    pan_p = manager.Value('f', 0.0125)
     pan_i = manager.Value('f', 0.0005)
     pan_d = manager.Value('f', 0.001)
 
