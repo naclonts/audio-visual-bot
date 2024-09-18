@@ -13,6 +13,9 @@ from pydub.playback import play
 
 from object_tracking import get_object_tracking_processes
 
+# Import the animation handler
+from animations import start_animation_process
+
 load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/complete"
@@ -39,12 +42,14 @@ def call_llm_api(prompt):
     global prompt_history
     client = anthropic.Anthropic()
 
-    system_prompt = "The assistant is integrated into a robot that communicates through a Raspberry Pi device. " + \
-        "Text from the robot's microphone is passed to the assistant via the Anthropic API. " + \
-        "The assistant may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. " + \
-        "The assistant is named Thomas MacLarlyle. It thinks and speaks in the style of Thomas Carlyle. " + \
-        "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. The assistant replies in one or two sentences unless a longer monologue is warranted. " + \
+    system_prompt = (
+        "The assistant is integrated into a robot that communicates through a Raspberry Pi device. "
+        "Text from the robot's microphone is passed to the assistant via the Anthropic API. "
+        "The assistant may also be passed some parsed visual cues as text. The robot has an integrated camera and face tracking device. "
+        "The assistant is named Thomas MacLarlyle. It thinks and speaks in the style of Thomas Carlyle. "
+        "Keeps things short and conversational. Brevity is favored, to allow an interactive exchange. The assistant replies in one or two sentences unless a longer monologue is warranted. "
         "Note that because voice transcription is being done with a simple Whisper model before the text is passed to the assistant, there may be some errors in the text transcription. Buest guesses should be used as to the intention of the speaker."
+    )
 
     new_prompt_series = prompt_history + [
         {
@@ -120,7 +125,7 @@ def text_to_speech(text):
                 else:
                     print(f"Error: {response.status_code} - {response.text}")
 
-def audio_player(context, running):
+def audio_player(context, running, state):
     """Play audio files from the queue sequentially."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     p = pyaudio.PyAudio()
@@ -128,7 +133,7 @@ def audio_player(context, running):
     try:
         while running.value or not audio_queue.empty():
             if not audio_queue.empty():
-                # Set the event to indicate audio is playing
+                state.value = "speaking"
                 context.is_playing_audio = True
 
                 audio_file_path = audio_queue.get()
@@ -173,15 +178,20 @@ def audio_player(context, running):
                 print(f"Removing audio file: {audio_file_path}. Queue empty: {audio_queue.empty()}")
                 os.remove(audio_file_path)
 
-            # Clear the event when audio finishes playing
-            if audio_queue.empty():
+                if running.value:
+                    # set state to idle until listener starts back up
+                    state.value = "idle"
+
+            # Clear the flag when audio finishes playing
+            if audio_queue.empty() and context.is_playing_audio:
                 context.is_playing_audio = False
 
     finally:
         p.terminate()  # Make sure PyAudio is properly terminated
         context.is_playing_audio = False  # Ensure the flag is clear if the loop ends
+        state.value = "idle"
 
-def handle_transcription(context, text):
+def handle_transcription(context, text, state):
     print(f"\nReal-time transcription: {text}.\nis_playing_audio: {context.is_playing_audio}\n")
 
     # don't get another response while the audio from the previous response is playing
@@ -190,20 +200,26 @@ def handle_transcription(context, text):
         return
 
     # there's some bugginess where "Thank you" gets transcribed during periods of silence
-    if text =='Thank you.': return
+    if text == 'Thank you.': return
     if text.strip() == '': return
+
+    state.value = "thinking"
 
     response = call_llm_api(text)
     print(f"\nLLM Response: {response}")
     text_to_speech('. '.join([r.text for r in response]))
 
-def listen_to_audio(context, running):
+    # After thinking, set state back to idle
+    if state.value != "speaking":  # Prevent overriding 'speaking' state
+        state.value = "idle"
+
+def listen_to_audio(context, running, state):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     recorder = AudioToTextRecorder(model='tiny.en')
     recorder_started = False  # Track whether the recorder has started
 
     def transcribe(text):
-        return handle_transcription(context, text)
+        return handle_transcription(context, text, state)
 
     try:
         while running.value:
@@ -211,12 +227,13 @@ def listen_to_audio(context, running):
                 if recorder_started:
                     print("Stopping recorder.")
                     recorder.stop()  # Explicitly stop the recorder if audio is playing
-                    recorder_started = False  # Update the flag since the recorder is stopped
+                    recorder_started = False
             else:
                 if not recorder_started:
                     print("Starting recorder.")
                     recorder.start()  # Start the recorder if it hasn't been started yet
-                    recorder_started = True  # Update the flag since the recorder has started
+                    recorder_started = True
+                    state.value = "listening"
                 recorder.text(transcribe)
 
             time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
@@ -234,9 +251,17 @@ if __name__ == "__main__":
         context = manager.Namespace()
         context.is_playing_audio = False
 
+        # Create a shared state variable with listening, thinking, speaking, and idle states
+        state = manager.Value('c', "idle")  # 'c' for char array (string)
+
+        # Start the animation process
+        animation_process = multiprocessing.Process(target=start_animation_process, args=(state,))
+        animation_process.start()
+
+        # Define other processes
         processes = [
-            multiprocessing.Process(target=listen_to_audio, args=(context, running)),
-            multiprocessing.Process(target=audio_player, args=(context, running)),
+            multiprocessing.Process(target=listen_to_audio, args=(context, running, state)),
+            multiprocessing.Process(target=audio_player, args=(context, running, state)),
         ]
 
         processes += get_object_tracking_processes(manager)
@@ -251,6 +276,7 @@ if __name__ == "__main__":
         print("\nGracefully stopping...")
         running.value = False
         context.is_playing_audio = False  # Clear the flag if stopping
+        state.value = "idle"  # Set state to idle
         print("Stopped all processes. Exiting.")
         time.sleep(0.5)
         os._exit(1)
