@@ -1,11 +1,8 @@
-# animations.py
-
 from luma.core.interface.serial import i2c
 from luma.oled.device import ssd1306
 from luma.core.render import canvas
 import math
 import time
-import multiprocessing
 
 class AnimationHandler:
     def __init__(self, state):

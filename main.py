@@ -16,12 +16,16 @@ from object_tracking import get_object_tracking_processes
 # Import the animation handler
 from animations import start_animation_process
 
+# Import the sentiment LED handler
+from sentiment_led import start_sentiment_led_process
+
 load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/complete"
 prompt_history = []
 running = multiprocessing.Value('b', True)  # Use a multiprocessing.Value for running
 audio_queue = multiprocessing.Queue()  # Queue to manage TTS audio playback
+sentiment_queue = multiprocessing.Queue() # Queue for text to analyze sentiment of
 
 # Piper TTS Setup
 USE_LOCAL_TTS = False
@@ -191,7 +195,7 @@ def audio_player(context, running, state):
         context.is_playing_audio = False  # Ensure the flag is clear if the loop ends
         state.value = "idle"
 
-def handle_transcription(context, text, state):
+def handle_transcription(context, text, state, sentiment_queue):
     print(f"\nReal-time transcription: {text}.\nis_playing_audio: {context.is_playing_audio}\n")
 
     # don't get another response while the audio from the previous response is playing
@@ -207,19 +211,26 @@ def handle_transcription(context, text, state):
 
     response = call_llm_api(text)
     print(f"\nLLM Response: {response}")
-    text_to_speech('. '.join([r.text for r in response]))
+
+    response_text = '. '.join([r.text for r in response])
+
+    # Send the response for sentiment analyis
+    sentiment_queue.put(response_text)
+
+    # Convert the response text to speech and queue up audio
+    text_to_speech(response_text)
 
     # After thinking, set state back to idle
     if state.value != "speaking":  # Prevent overriding 'speaking' state
         state.value = "idle"
 
-def listen_to_audio(context, running, state):
+def listen_to_audio(context, running, state, sentiment_queue):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     recorder = AudioToTextRecorder(model='tiny.en')
     recorder_started = False  # Track whether the recorder has started
 
     def transcribe(text):
-        return handle_transcription(context, text, state)
+        return handle_transcription(context, text, state, sentiment_queue)
 
     try:
         while running.value:
@@ -258,9 +269,12 @@ if __name__ == "__main__":
         animation_process = multiprocessing.Process(target=start_animation_process, args=(state,))
         animation_process.start()
 
+        # Start the sentiment LED process
+        sentiment_led_process = start_sentiment_led_process(sentiment_queue, running)
+
         # Define other processes
         processes = [
-            multiprocessing.Process(target=listen_to_audio, args=(context, running, state)),
+            multiprocessing.Process(target=listen_to_audio, args=(context, running, state, sentiment_queue)),
             multiprocessing.Process(target=audio_player, args=(context, running, state)),
         ]
 
@@ -271,6 +285,9 @@ if __name__ == "__main__":
 
         for process in processes:
             process.join()
+
+        # Join the sentiment LED process
+        sentiment_led_process.join()
 
     except KeyboardInterrupt:
         print("\nGracefully stopping...")
