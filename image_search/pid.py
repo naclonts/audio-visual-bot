@@ -5,9 +5,9 @@ import time
 class PID:
     def __init__(self, kP=1, kI=0, kD=0):
         # initialize gains
-        self.kP = kP.value if hasattr(kP, 'value') else kP
-        self.kI = kI.value if hasattr(kI, 'value') else kI
-        self.kD = kD.value if hasattr(kD, 'value') else kD
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
 
     def initialize(self):
         # initialize the current and previous time

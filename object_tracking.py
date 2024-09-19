@@ -182,13 +182,13 @@ def get_object_tracking_processes(manager):
     tilt_to(tilt.value)
 
     # set PID values
-    pan_p = manager.Value('f', 0.0125)
-    pan_i = manager.Value('f', 0.0005)
-    pan_d = manager.Value('f', 0.001)
+    pan_p = 0.0125
+    pan_i = 0.0005
+    pan_d = 0.001
 
-    tilt_p = manager.Value('f', 0.005)
-    tilt_i = manager.Value('f', 0.001)
-    tilt_d = manager.Value('f', 0.001)
+    tilt_p = 0.005
+    tilt_i = 0.001
+    tilt_d = 0.001
 
     # we have 4 processes to start:
     # 1. find_object_center - finds the object center
